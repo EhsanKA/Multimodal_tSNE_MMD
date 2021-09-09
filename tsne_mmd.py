@@ -265,8 +265,27 @@ def gaussian_kernel_matrix(x, y, sigmas):
     s = tf.matmul(beta, tf.reshape(dist, (1, -1)))
 
     return tf.reshape(tf.reduce_sum(tf.exp(-s), 0), tf.shape(dist))
+def t_distribution_kernel_matrix(x, y, sigmas):
+    """Computes a Guassian Radial Basis Kernel between the samples of x and y.
+    We create a sum of multiple gaussian kernels each having a width sigma_i.
+    Args:
+    x: a tensor of shape [num_samples, num_features]
+    y: a tensor of shape [num_samples, num_features]
+    sigmas: a tensor of floats which denote the widths of each of the
+      gaussians in the kernel.
+    Returns:
+    A tensor of shape [num_samples{x}, num_samples{y}] with the RBF kernel.
+    """
+    # beta = 1. / (2. * (tf.expand_dims(sigmas, 1)))
 
-def maximum_mean_discrepancy(x, y, kernel=gaussian_kernel_matrix, bandwidth=1.0):
+    dist = compute_pairwise_distances(x, y)
+    dist_1 = tf.add(dist, tf.constant(1., dtype=tf.float32))
+
+    s = tf.pow(tf.reshape(dist_1, (1, -1)), -1)
+
+    return tf.reshape(tf.reduce_sum(s, 0), tf.shape(dist))
+
+def maximum_mean_discrepancy(x, y, kernel=t_distribution_kernel_matrix, bandwidth=1.0):
 
     """Computes the Maximum Mean Discrepancy (MMD) of two samples: x and y.
     Maximum Mean Discrepancy (MMD) is a distance-measure between the samples of
@@ -295,7 +314,7 @@ def maximum_mean_discrepancy(x, y, kernel=gaussian_kernel_matrix, bandwidth=1.0)
     return cost
 
 
-def tsne(X1, X2, no_dims=30, perplexity=70, max_iter=1000):
+def tsne(X1, X2, no_dims=30, perplexity=70, max_iter=1000, mmd_coef = 1.0, mmd_radius=1.0, mmd_kernel= t_distribution_kernel_matrix):
     """
         Runs t-SNE on the dataset in the NxD array X to reduce its
         dimensionality to no_dims dimensions. The syntaxis of the function is
@@ -309,9 +328,11 @@ def tsne(X1, X2, no_dims=30, perplexity=70, max_iter=1000):
 
         tf_embed1 = tf.Variable(ts1.Y, dtype=tf.float32)
         tf_embed2 = tf.Variable(ts2.Y, dtype=tf.float32)
+        res = tf.constant(1000.0, dtype=tf.float32)
 
+        # if iter >100:
         with tf.GradientTape(persistent=True) as tape:
-            res = maximum_mean_discrepancy(tf_embed1, tf_embed2, bandwidth=1.0)
+            res = maximum_mean_discrepancy(tf_embed1, tf_embed2,kernel=mmd_kernel, bandwidth=mmd_radius)
 
         ts1._update(iter)
         ts2._update(iter)
@@ -321,10 +342,11 @@ def tsne(X1, X2, no_dims=30, perplexity=70, max_iter=1000):
         # best results were with proximity=4 and reatio=5000
         # ts1.Y, ts2.Y, mmd_loss = mmd(ts1.Y, ts2.Y, proximity=8, ratio=100000)
 
-
+        # if iter > 100:
         [dx1, dx2] = tape.gradient(res, [tf_embed1, tf_embed2])
-        ts1.Y += dx1.numpy()
-        ts2.Y += dx2.numpy()
+        ts1.Y += mmd_coef * dx1.numpy()
+        ts2.Y += mmd_coef * dx2.numpy()
+
         ts1.embeddings_after_mmd.append(ts1.Y)
         ts2.embeddings_after_mmd.append(ts2.Y)
         ts1.mmd_loss.append(res.numpy())
@@ -340,9 +362,29 @@ def tsne(X1, X2, no_dims=30, perplexity=70, max_iter=1000):
     return ts1, ts2
 
 
+def tsne_single(X, no_dims=2, perplexity=70, max_iter=1000):
+    """
+        Runs t-SNE on the dataset in the NxD array X to reduce its
+        dimensionality to no_dims dimensions. The syntaxis of the function is
+        `Y = tsne.tsne(X, no_dims, perplexity), where X is an NxD NumPy array.
+    """
+    ts = TSNE(X, no_dims=no_dims, perplexity=perplexity)
+
+    # Run iterations
+    for iter in range(max_iter):
+
+        ts._update(iter)
+        ts.embeddings_before_mmd.append(ts.Y)
+
+        ts.embeddings_after_mmd.append(ts.Y)
+
+    return ts
+
+
 import time
 
-def generate_results(X1, X2, n_repeat=1, no_dims=30, perplexity=70, max_iter=300):
+def generate_results(X1, X2, n_repeat=1, no_dims=30, perplexity=70, max_iter=300,
+                     mmd_coef = 1.0, mmd_radius=1.0, mmd_kernel= t_distribution_kernel_matrix):
     ts1_list = []
     ts2_list = []
     time_list = []
@@ -350,7 +392,8 @@ def generate_results(X1, X2, n_repeat=1, no_dims=30, perplexity=70, max_iter=300
     for i in range(n_repeat):
         print("********** replication:{} ********".format(i + 1))
         start = time.time()
-        ts1, ts2 = tsne(X1, X2, no_dims=no_dims, perplexity=perplexity, max_iter=max_iter)
+        ts1, ts2 = tsne(X1, X2, no_dims=no_dims, perplexity=perplexity, max_iter=max_iter,
+                        mmd_coef = mmd_coef, mmd_radius=mmd_radius, mmd_kernel= mmd_kernel)
         end = time.time()
         u1 = pca(ts1.Y, no_dims=2)
         ts1.y2d = u1
