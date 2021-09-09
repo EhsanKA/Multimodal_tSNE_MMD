@@ -372,12 +372,19 @@ def tsne(X1, X2, no_dims=30, perplexity=70, max_iter=1000, mmd_coef = 1.0, mmd_r
     return ts1, ts2
 
 def update_ot(pi, source, target):
-    source_updates = -source
-    target_updates = -target
+    # source_updates = -source
+    # target_updates = -target
+    # for i in range(source.shape[0]):
+    #     for j in range(target.shape[0]):
+    #         source_updates[i] += pi[i, j] * target[j]
+    #         target_updates[j] += pi[i, j] * source[i]
+    source_updates = np.zeros_like(source)
+    target_updates = np.zeros_like(target)
     for i in range(source.shape[0]):
         for j in range(target.shape[0]):
-            source_updates[i] += pi[i, j] * target[j]
-            target_updates[j] += pi[i, j] * source[i]
+            v = target[j]- source[i]
+            source_updates[i] += pi[i, j] * (v/ np.linalg.norm(v))
+            target_updates[j] += pi[i, j] * (-v/np.linalg.norm(v))
 
     return source_updates, target_updates
 
